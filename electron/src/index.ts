@@ -11,6 +11,9 @@ if (require('electron-squirrel-startup')) {
 // Allow video autoplay with sound in browser tabs (no user gesture required)
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// Chrome-like user-agent: Google blocks "Electron" UA from OAuth/SSO flows
+const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`;
+
 // ── Browser tab management ──────────────────────────────────────────
 interface Tab {
   id: number;
@@ -278,10 +281,16 @@ function createTab(url: string, switchTo = true): Tab {
   // Handle new-window requests (popups, target="_blank", window.open, OAuth flows)
   // Route them into Lobster tabs instead of opening separate OS windows
   view.webContents.setWindowOpenHandler(({ url, disposition }) => {
-    // OAuth & sign-in flows: open in NEW TAB (preserves parent page context for postMessage/redirect)
-    if (url.includes('accounts.google.com') || url.includes('accounts.youtube.com') ||
-        url.includes('oauth') || url.includes('signin') || url.includes('login') ||
-        url.includes('auth') || url.includes('sso')) {
+    // OAuth & sign-in flows: navigate IN-PLACE so redirect chain completes naturally
+    // (opening in new tab breaks redirect back to the originating site)
+    const isOAuth = url.includes('accounts.google.com') || url.includes('accounts.youtube.com') ||
+        url.includes('oauth') || url.includes('signin/oauth') || url.includes('/sso');
+    if (isOAuth) {
+      view.webContents.loadURL(url);
+      return { action: 'deny' };
+    }
+    // Regular login/auth pages: open in new tab
+    if (url.includes('login') || url.includes('signin') || url.includes('auth')) {
       createTab(url);
       return { action: 'deny' };
     }
@@ -3003,6 +3012,9 @@ const COOKIE_OBSERVER_JS = `
 })()`;
 
 app.on('ready', () => {
+  // Set Chrome-like user-agent globally — fixes Google SSO/OAuth 400 errors
+  session.defaultSession.setUserAgent(CHROME_UA);
+
   // Auto-grant microphone permission
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(true);
