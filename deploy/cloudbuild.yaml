@@ -4,9 +4,9 @@ steps:
     args:
       - 'build'
       - '-t'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/pulse-browser/pulse-backend:${SHORT_SHA}'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lobster-browser/lobster-backend:${SHORT_SHA}'
       - '-t'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/pulse-browser/pulse-backend:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lobster-browser/lobster-backend:latest'
       - './backend'
 
   # Push to Artifact Registry
@@ -14,7 +14,7 @@ steps:
     args:
       - 'push'
       - '--all-tags'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/pulse-browser/pulse-backend'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lobster-browser/lobster-backend'
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -22,9 +22,9 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'pulse-backend'
+      - 'lobster-backend'
       - '--image'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/pulse-browser/pulse-backend:${SHORT_SHA}'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lobster-browser/lobster-backend:${SHORT_SHA}'
       - '--region'
       - '${_REGION}'
       - '--allow-unauthenticated'
@@ -39,4 +39,4 @@ substitutions:
   _REGION: us-central1
 
 images:
-  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/pulse-browser/pulse-backend'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/lobster-browser/lobster-backend'

@@ -28,17 +28,17 @@ resource "google_project_service" "apis" {
 }
 
 # Artifact Registry for container images
-resource "google_artifact_registry_repository" "pulse" {
+resource "google_artifact_registry_repository" "lobster" {
   location      = var.region
-  repository_id = "pulse-browser"
+  repository_id = "lobster-browser"
   format        = "DOCKER"
-  description   = "Pulse Browser container images"
+  description   = "Lobster Browser container images"
 
   depends_on = [google_project_service.apis]
 }
 
 # Firestore database for session memory
-resource "google_firestore_database" "pulse" {
+resource "google_firestore_database" "lobster" {
   name        = "(default)"
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
@@ -48,7 +48,7 @@ resource "google_firestore_database" "pulse" {
 
 # Cloud Storage bucket for screenshots
 resource "google_storage_bucket" "screenshots" {
-  name          = "${var.project_id}-pulse-screenshots"
+  name          = "${var.project_id}-lobster-screenshots"
   location      = var.region
   force_destroy = true
 
@@ -67,34 +67,34 @@ resource "google_storage_bucket" "screenshots" {
 }
 
 # Service account for Cloud Run
-resource "google_service_account" "pulse_backend" {
-  account_id   = "pulse-backend"
-  display_name = "Pulse Browser Backend"
+resource "google_service_account" "lobster_backend" {
+  account_id   = "lobster-backend"
+  display_name = "Lobster Browser Backend"
 }
 
 # IAM: Allow backend to access Firestore
 resource "google_project_iam_member" "firestore_user" {
   project = var.project_id
   role    = "roles/datastore.user"
-  member  = "serviceAccount:${google_service_account.pulse_backend.email}"
+  member  = "serviceAccount:${google_service_account.lobster_backend.email}"
 }
 
 # IAM: Allow backend to access Cloud Storage
 resource "google_project_iam_member" "storage_user" {
   project = var.project_id
   role    = "roles/storage.objectAdmin"
-  member  = "serviceAccount:${google_service_account.pulse_backend.email}"
+  member  = "serviceAccount:${google_service_account.lobster_backend.email}"
 }
 
 # IAM: Allow backend to use Vertex AI
 resource "google_project_iam_member" "vertex_user" {
   project = var.project_id
   role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_service_account.pulse_backend.email}"
+  member  = "serviceAccount:${google_service_account.lobster_backend.email}"
 }
 
 # Cloud Run service
-resource "google_cloud_run_v2_service" "pulse_backend" {
+resource "google_cloud_run_v2_service" "lobster_backend" {
   name     = var.service_name
   location = var.region
 
@@ -108,7 +108,7 @@ resource "google_cloud_run_v2_service" "pulse_backend" {
     timeout          = "3600s"
 
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.pulse.repository_id}/pulse-backend:latest"
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.lobster.repository_id}/lobster-backend:latest"
 
       ports {
         container_port = 8080
@@ -135,12 +135,12 @@ resource "google_cloud_run_v2_service" "pulse_backend" {
       }
     }
 
-    service_account = google_service_account.pulse_backend.email
+    service_account = google_service_account.lobster_backend.email
   }
 
   depends_on = [
     google_project_service.apis,
-    google_artifact_registry_repository.pulse,
+    google_artifact_registry_repository.lobster,
   ]
 }
 
@@ -148,7 +148,7 @@ resource "google_cloud_run_v2_service" "pulse_backend" {
 resource "google_cloud_run_v2_service_iam_member" "public" {
   project  = var.project_id
   location = var.region
-  name     = google_cloud_run_v2_service.pulse_backend.name
+  name     = google_cloud_run_v2_service.lobster_backend.name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }

@@ -12,5 +12,5 @@ variable "region" {
 variable "service_name" {
   description = "Cloud Run service name"
   type        = string
-  default     = "pulse-backend"
+  default     = "lobster-backend"
 }

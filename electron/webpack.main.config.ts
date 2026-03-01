@@ -1,4 +1,6 @@
 import type { Configuration } from 'webpack';
+import * as path from 'path';
+import CopyPlugin from 'copy-webpack-plugin';
 
 import { rules } from './webpack.rules';
 import { plugins } from './webpack.plugins';
@@ -13,7 +15,14 @@ export const mainConfig: Configuration = {
   module: {
     rules,
   },
-  plugins,
+  plugins: [
+    ...plugins,
+    new CopyPlugin({
+      patterns: [
+        { from: path.resolve(__dirname, 'assets'), to: 'assets' },
+      ],
+    }),
+  ],
   resolve: {
     extensions: ['.js', '.ts', '.jsx', '.tsx', '.css', '.json'],
   },

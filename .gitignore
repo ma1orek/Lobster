@@ -33,3 +33,7 @@ terraform/terraform.tfvars
 .specstory/
 .cursorindexingignore
 *.log
+backend_log.txt
+
+# ai-coustics models (downloaded at runtime)
+backend/models/

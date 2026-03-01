@@ -1,223 +1,351 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface VoiceOrbProps {
-  state: 'idle' | 'listening' | 'thinking' | 'speaking';
-  onStartListening: () => void;
-  onStopListening: () => void;
-  sendAudio: (pcmData: ArrayBuffer) => void;
+  mode: 'idle' | 'compact';
+  state: 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting';
+  wsConnected: boolean;
+  awake: boolean;
+  // Controlled mic state (lifted to App.tsx)
+  muted: boolean;
+  micActive: boolean;
+  audioLevel: number;
+  onToggleMute: () => void;
+  // Text command support
   sendTextCommand: (text: string) => void;
+  onChatToggle?: () => void;
 }
 
 export default function VoiceOrb({
+  mode,
   state,
-  onStartListening,
-  onStopListening,
-  sendAudio,
+  wsConnected,
+  awake,
+  muted,
+  micActive,
+  audioLevel,
+  onToggleMute,
   sendTextCommand,
+  onChatToggle,
 }: VoiceOrbProps) {
-  const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState('');
-  const audioStreamRef = useRef<MediaStream | null>(null);
-  const audioWorkletRef = useRef<AudioWorkletNode | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-
-  const startListening = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
-      });
-      audioStreamRef.current = stream;
-
-      const ctx = new AudioContext({ sampleRate: 16000 });
-      audioCtxRef.current = ctx;
-
-      // Use ScriptProcessorNode as fallback (simpler than AudioWorklet for hackathon)
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
-
-      processor.onaudioprocess = (e) => {
-        const float32 = e.inputBuffer.getChannelData(0);
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-32768, Math.min(32767, Math.floor(float32[i] * 32768)));
-        }
-        sendAudio(int16.buffer);
-      };
-
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      onStartListening();
-    } catch (err) {
-      console.error('Failed to access microphone:', err);
-    }
-  }, [sendAudio, onStartListening]);
-
-  const stopListening = useCallback(() => {
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(t => t.stop());
-      audioStreamRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close();
-      audioCtxRef.current = null;
-    }
-    onStopListening();
-  }, [onStopListening]);
-
-  const handleOrbClick = useCallback(() => {
-    if (state === 'listening') {
-      stopListening();
-    } else if (state === 'idle') {
-      startListening();
-    }
-  }, [state, startListening, stopListening]);
+  const [compactInputOpen, setCompactInputOpen] = useState(false);
 
   const handleTextSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (textInput.trim()) {
       sendTextCommand(textInput.trim());
       setTextInput('');
+      setCompactInputOpen(false);
     }
   }, [textInput, sendTextCommand]);
 
-  const orbColors = {
-    idle: { bg: 'var(--pulse-accent)', glow: 'var(--pulse-accent-glow)' },
-    listening: { bg: '#22c55e', glow: 'rgba(34, 197, 94, 0.4)' },
-    thinking: { bg: '#eab308', glow: 'rgba(234, 179, 8, 0.4)' },
-    speaking: { bg: '#6366f1', glow: 'rgba(99, 102, 241, 0.5)' },
-  };
+  // Active = awake + mic on (ALWAYS show red animation when awake, not just listening/speaking)
+  const isActive = !muted && awake;
+  const isHot = isActive && (state === 'listening' || state === 'speaking');
+  const ringScale = isActive ? 1 + audioLevel * (isHot ? 0.5 : 0.2) : 1;
 
-  const stateLabels = {
-    idle: 'Click to speak',
-    listening: 'Listening...',
-    thinking: 'Processing...',
-    speaking: 'Speaking...',
-  };
+  const stateColor = !awake ? 'rgba(255,255,255,0.15)' : '#ff2b44'; // Always red when awake
+  const showPulse = isActive; // Always show pulse when awake + unmuted
+  // Dormant pulse — subtle breathing when waiting for wake word
+  const showDormantPulse = !muted && !awake && wsConnected;
 
-  return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 z-50">
-      {/* Text input toggle */}
-      <AnimatePresence>
-        {showTextInput && (
-          <motion.form
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            onSubmit={handleTextSubmit}
-            className="flex gap-2"
-          >
-            <input
-              type="text"
-              value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Type a command..."
-              autoFocus
-              className="px-4 py-2 rounded-full text-sm outline-none"
-              style={{
-                background: 'var(--pulse-surface)',
-                border: '1px solid var(--pulse-border)',
-                color: 'var(--pulse-text)',
-                width: '300px',
-              }}
-            />
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-full text-sm font-medium"
-              style={{ background: 'var(--pulse-accent)', color: '#fff' }}
-            >
-              Send
-            </button>
-          </motion.form>
+  // ── COMPACT MODE (in chrome bar) ────────────────────────────────
+  if (mode === 'compact') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, position: 'relative' }}>
+        {/* Audio-reactive glow ring behind mic button (active) */}
+        {showPulse && (
+          <motion.div
+            animate={{
+              scale: [1, 1.3 + audioLevel * 0.4, 1],
+              opacity: [0.3, 0.6 + audioLevel * 0.3, 0.3],
+            }}
+            transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+            style={{
+              position: 'absolute',
+              right: 0, top: '50%',
+              width: 28, height: 28,
+              marginTop: -14,
+              borderRadius: 8,
+              border: `1.5px solid ${stateColor}`,
+              boxShadow: `0 0 16px ${stateColor}44, 0 0 32px ${stateColor}22`,
+              pointerEvents: 'none',
+              zIndex: 0,
+            }}
+          />
         )}
-      </AnimatePresence>
+        {/* Dormant breathing pulse — waiting for wake word */}
+        {showDormantPulse && !showPulse && (
+          <motion.div
+            animate={{
+              scale: [1, 1.1, 1],
+              opacity: [0.1, 0.25, 0.1],
+            }}
+            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            style={{
+              position: 'absolute',
+              right: 0, top: '50%',
+              width: 28, height: 28,
+              marginTop: -14,
+              borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.1)',
+              pointerEvents: 'none',
+              zIndex: 0,
+            }}
+          />
+        )}
+        {/* Text input popover — glass */}
+        <AnimatePresence>
+          {compactInputOpen && (
+            <motion.form
+              key="compact-input"
+              initial={{ opacity: 0, width: 0, x: 10 }}
+              animate={{ opacity: 1, width: 220, x: 0 }}
+              exit={{ opacity: 0, width: 0, x: 10 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              onSubmit={handleTextSubmit}
+              style={{
+                position: 'absolute', right: 36, top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'linear-gradient(135deg, rgba(18, 18, 22, 0.8) 0%, rgba(12, 12, 16, 0.75) 100%)',
+                backdropFilter: 'blur(32px) saturate(1.3)',
+                WebkitBackdropFilter: 'blur(32px) saturate(1.3)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 12,
+                overflow: 'hidden',
+                display: 'flex',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06)',
+              }}
+            >
+              <input
+                autoFocus
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="Tell Lobster what to do..."
+                style={{
+                  flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                  color: '#fff', fontSize: 12.5, padding: '8px 12px',
+                  fontFamily: "'Inter', sans-serif",
+                  letterSpacing: '0.01em',
+                }}
+                onKeyDown={(e) => e.key === 'Escape' && setCompactInputOpen(false)}
+              />
+            </motion.form>
+          )}
+        </AnimatePresence>
 
-      <div className="flex items-center gap-3">
-        {/* Keyboard icon */}
-        <button
-          onClick={() => setShowTextInput(!showTextInput)}
-          className="p-2 rounded-full transition-colors"
-          style={{
-            background: showTextInput ? 'var(--pulse-accent)' : 'var(--pulse-surface)',
-            border: '1px solid var(--pulse-border)',
-            color: 'var(--pulse-text)',
-          }}
-          title="Toggle text input"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="2" y="4" width="20" height="16" rx="2" />
-            <line x1="6" y1="8" x2="6" y2="8" />
-            <line x1="10" y1="8" x2="10" y2="8" />
-            <line x1="14" y1="8" x2="14" y2="8" />
-            <line x1="18" y1="8" x2="18" y2="8" />
-            <line x1="8" y1="12" x2="16" y2="12" />
-            <line x1="6" y1="16" x2="18" y2="16" />
-          </svg>
-        </button>
-
-        {/* The Orb */}
+        {/* Mic button — glass */}
         <motion.button
-          onClick={handleOrbClick}
-          className="relative rounded-full flex items-center justify-center cursor-pointer"
+          onClick={onToggleMute}
+          whileTap={{ scale: 0.88 }}
+          animate={isActive ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+          transition={{ duration: 1.2, repeat: isActive ? Infinity : 0, ease: 'easeInOut' }}
           style={{
-            width: '64px',
-            height: '64px',
-            background: orbColors[state].bg,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 28, height: 28, borderRadius: 8,
+            border: isActive ? '1px solid rgba(255,43,68,0.35)' : '1px solid rgba(255,255,255,0.07)',
+            background: muted
+              ? 'rgba(255,255,255,0.04)'
+              : isActive
+              ? 'linear-gradient(135deg, rgba(255, 43, 68, 0.22) 0%, rgba(255, 43, 68, 0.12) 100%)'
+              : 'rgba(255,255,255,0.04)',
+            cursor: 'pointer', flexShrink: 0,
+            boxShadow: isActive
+              ? '0 0 16px rgba(255,43,68,0.25), inset 0 1px 0 rgba(255,255,255,0.06)'
+              : 'inset 0 1px 0 rgba(255,255,255,0.04)',
+            transition: 'background 0.2s, box-shadow 0.2s, border-color 0.2s',
           }}
-          animate={{
-            boxShadow: state === 'idle'
-              ? `0 0 20px ${orbColors[state].glow}`
-              : state === 'listening'
-              ? [
-                  `0 0 20px ${orbColors[state].glow}`,
-                  `0 0 50px ${orbColors[state].glow}`,
-                  `0 0 20px ${orbColors[state].glow}`,
-                ]
-              : state === 'thinking'
-              ? `0 0 30px ${orbColors[state].glow}`
-              : [
-                  `0 0 20px ${orbColors[state].glow}`,
-                  `0 0 40px ${orbColors[state].glow}`,
-                  `0 0 20px ${orbColors[state].glow}`,
-                ],
-            scale: state === 'listening' ? [1, 1.08, 1] : 1,
-          }}
-          transition={{
-            duration: state === 'listening' || state === 'speaking' ? 1.5 : 0.3,
-            repeat: state === 'listening' || state === 'speaking' ? Infinity : 0,
-          }}
+          title={muted ? 'Unmute' : 'Mute'}
         >
-          {/* Mic icon */}
-          {state === 'idle' || state === 'listening' ? (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
+          {muted ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="1" y1="1" x2="23" y2="23" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+              stroke={isActive ? '#ff2b44' : 'rgba(255,255,255,0.7)'}
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
-          ) : state === 'thinking' ? (
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-              </svg>
-            </motion.div>
-          ) : (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            </svg>
           )}
         </motion.button>
       </div>
+    );
+  }
 
-      {/* State label */}
-      <span className="text-xs" style={{ color: 'var(--pulse-text-dim)' }}>
-        {stateLabels[state]}
-      </span>
+  // ── IDLE MODE (centered in flex parent) ─────────────
+  return (
+    <div style={{ position: 'relative' }}>
+
+      {/* Audio reactive ring — red glow (always when awake) */}
+      {isActive && (
+        <>
+          {/* Outer breathing ring */}
+          <motion.div
+            animate={{
+              scale: isHot ? [1, 1.08 + audioLevel * 0.4, 1] : [1, 1.04, 1],
+              opacity: isHot ? [0.3, 0.7 + audioLevel * 0.3, 0.3] : [0.15, 0.35, 0.15],
+            }}
+            transition={{ duration: isHot ? 0.8 : 2, repeat: Infinity, ease: 'easeInOut' }}
+            style={{
+              position: 'absolute', inset: -14,
+              borderRadius: 40,
+              border: '1.5px solid rgba(255,43,68,0.6)',
+              boxShadow: `0 0 ${isHot ? 30 : 16}px rgba(255,43,68,${isHot ? 0.25 : 0.1})`,
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Inner glow ring — reacts to audio level immediately */}
+          <motion.div
+            animate={{ scale: ringScale, opacity: 0.2 + audioLevel * 0.6 }}
+            transition={{ duration: 0.05 }}
+            style={{
+              position: 'absolute', inset: -6,
+              borderRadius: 34,
+              border: '1px solid rgba(255,43,68,0.4)',
+              boxShadow: '0 0 12px rgba(255,43,68,0.12)',
+              pointerEvents: 'none',
+            }}
+          />
+        </>
+      )}
+      {/* Dormant breathing ring — waiting for wake word */}
+      {showDormantPulse && !isActive && (
+        <motion.div
+          animate={{ scale: [1, 1.05, 1], opacity: [0.1, 0.2, 0.1] }}
+          transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+          style={{
+            position: 'absolute', inset: -6,
+            borderRadius: 34,
+            border: '1px solid rgba(255,255,255,0.08)',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
+      <form
+        onSubmit={handleTextSubmit}
+        style={{
+          display: 'flex', alignItems: 'center',
+          width: 400, height: 56,
+          background: 'linear-gradient(135deg, rgba(18, 18, 22, 0.6) 0%, rgba(10, 10, 14, 0.55) 100%)',
+          backdropFilter: 'blur(40px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(40px) saturate(1.4)',
+          border: isActive
+            ? '1px solid rgba(255, 43, 68, 0.35)'
+            : '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: 28,
+          boxShadow: isActive
+            ? '0 8px 48px rgba(255,43,68,0.15), 0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)'
+            : '0 8px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)',
+          overflow: 'hidden',
+          transition: 'border-color 0.3s, box-shadow 0.3s',
+        }}
+      >
+        <input
+          type="text"
+          value={textInput}
+          onChange={(e) => setTextInput(e.target.value)}
+          placeholder={
+            !wsConnected ? 'Connecting...' :
+            muted ? 'Type or say "Hey, Lobster"' :
+            !awake ? 'Type or say "Hey, Lobster"' :
+            state === 'listening' ? 'Listening...' :
+            state === 'thinking' ? 'Thinking...' :
+            state === 'speaking' ? 'Speaking...' :
+            'Type or speak...'
+          }
+          style={{
+            flex: 1, height: '100%', background: 'transparent',
+            padding: '0 22px', color: '#fff', fontSize: 15,
+            fontFamily: "'Inter', sans-serif",
+            outline: 'none', border: 'none',
+            letterSpacing: '0.01em',
+          }}
+        />
+
+        {/* Mic button — glass circle */}
+        <motion.button
+          type="button"
+          onClick={onToggleMute}
+          whileTap={{ scale: 0.88 }}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 42, height: 42, borderRadius: '50%',
+            border: isActive ? '1px solid rgba(255,43,68,0.3)' : '1px solid rgba(255,255,255,0.08)',
+            cursor: 'pointer',
+            background: muted
+              ? 'rgba(255,255,255,0.05)'
+              : isActive
+              ? 'linear-gradient(135deg, rgba(255, 43, 68, 0.2) 0%, rgba(255, 43, 68, 0.1) 100%)'
+              : 'rgba(255,255,255,0.05)',
+            marginRight: 7, flexShrink: 0,
+            boxShadow: isActive
+              ? '0 0 12px rgba(255,43,68,0.2), inset 0 1px 0 rgba(255,255,255,0.06)'
+              : 'inset 0 1px 0 rgba(255,255,255,0.05)',
+            transition: 'all 0.25s ease',
+          }}
+        >
+          {muted ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="1" y1="1" x2="23" y2="23" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          ) : (
+            <motion.svg
+              width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke={isActive ? '#ff2b44' : 'rgba(255,255,255,0.8)'}
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              animate={isActive ? { scale: [1, 1.1, 1] } : { scale: 1 }}
+              transition={{ duration: 1.4, repeat: isActive ? Infinity : 0 }}
+            >
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </motion.svg>
+          )}
+        </motion.button>
+
+        {/* Send button (appears when text typed) */}
+        <AnimatePresence>
+          {textInput.trim() && (
+            <motion.button
+              key="send"
+              type="submit"
+              initial={{ opacity: 0, scale: 0.7, width: 0, marginRight: 0 }}
+              animate={{ opacity: 1, scale: 1, width: 42, marginRight: 7 }}
+              exit={{ opacity: 0, scale: 0.7, width: 0, marginRight: 0 }}
+              transition={{ duration: 0.18 }}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: 42, borderRadius: '50%',
+                border: '1px solid rgba(255,43,68,0.3)',
+                background: 'linear-gradient(135deg, rgba(255, 43, 68, 0.35) 0%, rgba(255, 43, 68, 0.2) 100%)',
+                cursor: 'pointer', flexShrink: 0, overflow: 'hidden',
+                boxShadow: '0 0 12px rgba(255,43,68,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </form>
     </div>
   );
 }

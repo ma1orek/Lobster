@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface LogEntry {
@@ -9,83 +9,107 @@ interface LogEntry {
 
 interface AgentPanelProps {
   log: LogEntry[];
-  agentState: 'idle' | 'listening' | 'thinking' | 'speaking';
+  agentState: 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting';
 }
 
+const stateColors: Record<string, string> = {
+  listening: '#4ade80',
+  thinking: '#facc15',
+  speaking: '#ff2b44',
+};
+
+const stateLabels: Record<string, string> = {
+  listening: 'Listening',
+  thinking: 'Thinking',
+  speaking: 'Speaking',
+};
+
 export default function AgentPanel({ log, agentState }: AgentPanelProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const visibleLog = log
+    .filter(e => e.type === 'user' || e.type === 'agent' || e.type === 'action')
+    .slice(-6);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [log]);
-
-  const typeColors: Record<string, string> = {
-    user: '#6366f1',
-    agent: '#22c55e',
-    action: '#eab308',
-    error: '#ef4444',
-  };
-
-  const typeLabels: Record<string, string> = {
-    user: 'You',
-    agent: 'Pulse',
-    action: 'Action',
-    error: 'Error',
-  };
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleLog.length]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      className="absolute right-4 top-4 bottom-24 w-72 flex flex-col rounded-xl overflow-hidden z-40"
-      style={{
-        background: 'rgba(19, 19, 26, 0.85)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid var(--pulse-border)',
-      }}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--pulse-border)' }}>
-        <div
-          className="w-2 h-2 rounded-full"
-          style={{
-            background: agentState === 'idle' ? 'var(--pulse-text-dim)' :
-                        agentState === 'listening' ? '#22c55e' :
-                        agentState === 'thinking' ? '#eab308' : '#6366f1',
-          }}
-        />
-        <span className="text-sm font-medium">Pulse Agent</span>
-        <span className="text-xs ml-auto" style={{ color: 'var(--pulse-text-dim)' }}>
-          {agentState}
-        </span>
-      </div>
+    <div style={{
+      width: '100%',
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      padding: '8px 16px 6px',
+      gap: 4,
+      overflow: 'hidden',
+    }}>
+      {/* State indicator */}
+      {agentState !== 'idle' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+          <motion.div
+            style={{ width: 6, height: 6, borderRadius: '50%', background: stateColors[agentState] || '#fff', flexShrink: 0 }}
+            animate={{ scale: [1, 1.4, 1], opacity: [0.6, 1, 0.6] }}
+            transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <span style={{ fontSize: 11, color: stateColors[agentState] || '#fff', fontWeight: 500, letterSpacing: '0.03em' }}>
+            {stateLabels[agentState] || agentState}
+          </span>
+        </div>
+      )}
 
-      {/* Log entries */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
-        <AnimatePresence>
-          {log.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: 'var(--pulse-text-dim)' }}>
-              Click the orb or type a command to start browsing with Pulse
-            </p>
-          ) : (
-            log.map((entry, i) => (
+      {/* Messages */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <AnimatePresence initial={false}>
+          {visibleLog.map((entry, i) => {
+            const isUser = entry.type === 'user';
+            const isAction = entry.type === 'action';
+
+            return (
               <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 5 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-xs"
+                key={`${entry.timestamp}-${i}`}
+                initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}
               >
-                <span className="font-medium" style={{ color: typeColors[entry.type] }}>
-                  {typeLabels[entry.type]}:
-                </span>{' '}
-                <span style={{ color: 'var(--pulse-text)' }}>{entry.text}</span>
+                <div style={{
+                  maxWidth: '78%',
+                  padding: isAction ? '3px 10px' : '6px 12px',
+                  borderRadius: isUser ? '14px 14px 3px 14px' : '14px 14px 14px 3px',
+                  background: isUser
+                    ? 'rgba(255, 43, 68, 0.2)'
+                    : isAction
+                    ? 'rgba(250, 204, 21, 0.12)'
+                    : 'rgba(30, 30, 30, 0.9)',
+                  border: isUser
+                    ? '1px solid rgba(255, 43, 68, 0.3)'
+                    : isAction
+                    ? '1px solid rgba(250, 204, 21, 0.25)'
+                    : '1px solid rgba(255,255,255,0.07)',
+                }}>
+                  <span style={{
+                    fontSize: isAction ? 11 : 12,
+                    color: isUser
+                      ? 'rgba(255,255,255,0.95)'
+                      : isAction
+                      ? 'rgba(250,204,21,0.9)'
+                      : 'rgba(255,255,255,0.82)',
+                    fontFamily: isAction ? 'ui-monospace, monospace' : "'Inter', sans-serif",
+                    lineHeight: 1.45,
+                    display: 'block',
+                  }}>
+                    {isAction ? `⚡ ${entry.text}` : entry.text}
+                  </span>
+                </div>
               </motion.div>
-            ))
-          )}
+            );
+          })}
         </AnimatePresence>
+        <div ref={bottomRef} />
       </div>
-    </motion.div>
+    </div>
   );
 }

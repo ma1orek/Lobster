@@ -1,16 +1,16 @@
 output "backend_url" {
   description = "Cloud Run service URL"
-  value       = google_cloud_run_v2_service.pulse_backend.uri
+  value       = google_cloud_run_v2_service.lobster_backend.uri
 }
 
 output "websocket_url" {
   description = "WebSocket endpoint URL"
-  value       = "${replace(google_cloud_run_v2_service.pulse_backend.uri, "https://", "wss://")}/ws"
+  value       = "${replace(google_cloud_run_v2_service.lobster_backend.uri, "https://", "wss://")}/ws"
 }
 
 output "firestore_database" {
   description = "Firestore database name"
-  value       = google_firestore_database.pulse.name
+  value       = google_firestore_database.lobster.name
 }
 
 output "screenshots_bucket" {
@@ -20,5 +20,5 @@ output "screenshots_bucket" {
 
 output "service_account" {
   description = "Backend service account email"
-  value       = google_service_account.pulse_backend.email
+  value       = google_service_account.lobster_backend.email
 }

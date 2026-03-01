@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --pulse-bg: #0a0a0f;
-  --pulse-surface: #13131a;
-  --pulse-border: #1e1e2a;
-  --pulse-text: #e4e4e7;
-  --pulse-text-dim: #71717a;
-  --pulse-accent: #6366f1;
-  --pulse-accent-glow: rgba(99, 102, 241, 0.3);
+  --pulse-bg: #050505;
+  --pulse-surface: rgba(20, 20, 20, 0.4);
+  --pulse-border: rgba(255, 255, 255, 0.1);
+  --pulse-text: #ffffff;
+  --pulse-text-dim: rgba(255, 255, 255, 0.6);
+  --pulse-accent: #ff2b44;
+  --pulse-accent-glow: rgba(255, 43, 68, 0.4);
   --pulse-green: #22c55e;
-  --pulse-red: #ef4444;
+  --pulse-red: #ff2b44;
 }
 
 * {
@@ -19,15 +19,15 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: var(--pulse-bg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #050505;
   color: var(--pulse-text);
   overflow: hidden;
   height: 100vh;
-  -webkit-app-region: drag;
+  /* NO drag here — only explicit drag regions in components */
 }
 
-button, input, a {
+button, input, a, form, select, textarea {
   -webkit-app-region: no-drag;
 }
 
@@ -35,6 +35,21 @@ button, input, a {
   height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+/* Thin dark scrollbars for panels */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Voice Orb animations */

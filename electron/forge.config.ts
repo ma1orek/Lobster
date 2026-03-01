@@ -25,6 +25,7 @@ const config: ForgeConfig = {
   plugins: [
     new AutoUnpackNativesPlugin({}),
     new WebpackPlugin({
+      devContentSecurityPolicy: "default-src 'self' 'unsafe-inline' 'unsafe-eval' data:; connect-src 'self' ws://localhost:8080 wss://localhost:8080 http://localhost:8080; media-src 'self' data: blob: file:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com",
       mainConfig,
       renderer: {
         config: rendererConfig,

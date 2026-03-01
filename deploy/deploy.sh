@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Pulse Browser - One-click Cloud Run deployment
+# Lobster Browser - One-click Cloud Run deployment
 # Usage: ./deploy/deploy.sh
 
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
-SERVICE_NAME="pulse-backend"
+SERVICE_NAME="lobster-backend"
 
 if [ -z "$PROJECT_ID" ]; then
   echo "Error: No project ID found. Set GOOGLE_CLOUD_PROJECT or run 'gcloud config set project YOUR_PROJECT_ID'"
@@ -14,7 +14,7 @@ if [ -z "$PROJECT_ID" ]; then
 fi
 
 echo "========================================"
-echo "  Pulse Browser - Cloud Run Deployment"
+echo "  Lobster Browser - Cloud Run Deployment"
 echo "========================================"
 echo "Project:  $PROJECT_ID"
 echo "Region:   $REGION"
@@ -40,7 +40,7 @@ gcloud firestore databases create \
 
 # Create Cloud Storage bucket (ignore if already exists)
 echo "[3/5] Setting up Cloud Storage..."
-gcloud storage buckets create "gs://${PROJECT_ID}-pulse-screenshots" \
+gcloud storage buckets create "gs://${PROJECT_ID}-lobster-screenshots" \
   --location="$REGION" \
   --uniform-bucket-level-access 2>/dev/null || echo "Storage bucket already exists."
 
@@ -73,4 +73,7 @@ echo "========================================"
 echo "Backend URL:    $SERVICE_URL"
 echo "WebSocket URL:  ${SERVICE_URL/https/wss}/ws"
 echo "Health check:   $SERVICE_URL/health"
+echo ""
+echo "Update your Electron app's WS URL to:"
+echo "  ${SERVICE_URL/https/wss}/ws/user1/session1"
 echo "========================================"

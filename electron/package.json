@@ -1,8 +1,8 @@
 {
-  "name": "pulse-browser",
-  "productName": "Pulse Browser",
-  "version": "0.1.0",
-  "description": "AI-native browser powered by Gemini - interprets the internet visually in real-time",
+  "name": "lobster-browser",
+  "productName": "Lobster Browser",
+  "version": "0.2.0",
+  "description": "The World's First Native Live-Agent Browser - powered by Gemini + OpenClaw-inspired DOM intelligence",
   "main": ".webpack/main",
   "private": true,
   "scripts": {
@@ -32,22 +32,27 @@
     "@typescript-eslint/parser": "^5.62.0",
     "@vercel/webpack-asset-relocator-loader": "^1.7.3",
     "autoprefixer": "^10.4.24",
+    "copy-webpack-plugin": "^13.0.1",
     "css-loader": "^6.11.0",
-    "electron": "40.6.0",
+    "electron": "^40.6.0",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
     "fork-ts-checker-webpack-plugin": "^7.3.0",
     "node-loader": "^2.1.0",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.5.6",
     "postcss-loader": "^8.2.1",
+    "sharp": "^0.34.5",
     "style-loader": "^3.3.4",
     "tailwindcss": "^4.2.1",
     "ts-loader": "^9.5.4",
     "typescript": "~5.4.0"
   },
   "dependencies": {
+    "@emotion/is-prop-valid": "^1.4.0",
     "electron-squirrel-startup": "^1.0.1",
     "framer-motion": "^12.34.3",
+    "ogl": "^1.0.11",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }

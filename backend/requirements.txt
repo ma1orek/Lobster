@@ -7,3 +7,5 @@ uvicorn[standard]>=0.34.0
 websockets>=13.0
 Pillow>=11.0
 python-dotenv>=1.0.0
+numpy>=2.0.0
+aic-sdk>=2.0.0
