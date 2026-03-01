@@ -1458,32 +1458,100 @@ function setupIPC(): void {
     if (tab) {
       galleryTabId = tab.id;
       // Send gallery HTML to the frontend — it will be loaded after tab creation
-      const galleryHtml = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Lobster Gallery</title>
+      const galleryHtml = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Lobster Gallery</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0e;color:#fff;font-family:'Inter',-apple-system,sans-serif;min-height:100vh}
-.header{padding:24px 32px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.06)}
-.header h1{font-size:18px;font-weight:600;background:linear-gradient(135deg,#FF2B44,#B70D11);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.header .count{color:rgba(255,255,255,0.3);font-size:13px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;padding:24px 32px}
-.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;overflow:hidden;transition:transform 0.2s,box-shadow 0.2s}
-.card:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(183,13,17,0.15)}
-.card img{width:100%;display:block;aspect-ratio:1;object-fit:cover;background:#111}
-.card .info{padding:12px 14px}
-.card .prompt{color:rgba(255,255,255,0.55);font-size:11px;line-height:1.5;max-height:48px;overflow:hidden;text-overflow:ellipsis}
-.card .time{color:rgba(255,255,255,0.2);font-size:10px;margin-top:6px}
-.generating{animation:gen-pulse 1.5s ease-in-out infinite}
-@keyframes gen-pulse{0%,100%{opacity:0.6}50%{opacity:0.2}}
-.empty{text-align:center;padding:80px 32px;color:rgba(255,255,255,0.2);font-size:14px}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Italiana&display=swap');
+body{background:#030305;color:#fff;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;min-height:100vh;position:relative;overflow-x:hidden}
+.aurora{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.aurora-orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:0;animation:orb-drift 20s ease-in-out infinite}
+.aurora-orb:nth-child(1){width:600px;height:600px;background:radial-gradient(circle,rgba(183,13,17,0.15),transparent 70%);top:-10%;left:10%;animation-delay:0s;animation-duration:18s}
+.aurora-orb:nth-child(2){width:500px;height:500px;background:radial-gradient(circle,rgba(255,43,68,0.1),transparent 70%);top:30%;right:-5%;animation-delay:-6s;animation-duration:22s}
+.aurora-orb:nth-child(3){width:700px;height:700px;background:radial-gradient(circle,rgba(120,0,60,0.08),transparent 70%);bottom:-15%;left:30%;animation-delay:-12s;animation-duration:25s}
+.aurora-orb:nth-child(4){width:400px;height:400px;background:radial-gradient(circle,rgba(255,80,100,0.06),transparent 70%);top:60%;left:-10%;animation-delay:-4s;animation-duration:20s}
+@keyframes orb-drift{0%{opacity:0.4;transform:translate(0,0) scale(1)}25%{opacity:0.8;transform:translate(40px,-30px) scale(1.1)}50%{opacity:0.5;transform:translate(-20px,50px) scale(0.95)}75%{opacity:0.9;transform:translate(30px,20px) scale(1.05)}100%{opacity:0.4;transform:translate(0,0) scale(1)}}
+body::after{content:'';position:fixed;inset:0;opacity:0.025;pointer-events:none;z-index:1;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+.header{position:sticky;top:0;z-index:10;padding:24px 40px;display:flex;align-items:center;gap:16px;border-bottom:1px solid rgba(255,255,255,0.04);backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);background:rgba(6,6,10,0.6)}
+.header-logo{display:flex;align-items:center;gap:12px}
+.header-logo svg{width:28px;height:28px;filter:drop-shadow(0 0 8px rgba(255,43,68,0.3))}
+.header h1{font-family:'Italiana',serif;font-size:24px;font-weight:400;background:linear-gradient(135deg,#FF2B44 0%,#ff8090 40%,#FF2B44 80%,#B70D11 100%);background-size:200% 200%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:gradient-shift 6s ease-in-out infinite;letter-spacing:0.02em}
+@keyframes gradient-shift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.header .subtitle{color:rgba(255,255,255,0.2);font-size:11px;font-weight:400;letter-spacing:0.06em;text-transform:uppercase;margin-left:4px}
+.header .count{color:rgba(255,255,255,0.3);font-size:11px;padding:4px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:20px;font-weight:500;margin-left:auto;backdrop-filter:blur(8px);letter-spacing:0.02em;transition:all 0.3s ease}
+.header .count:hover{background:rgba(255,43,68,0.08);border-color:rgba(255,43,68,0.15);color:rgba(255,255,255,0.5)}
+.grid{position:relative;z-index:2;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px;padding:32px 40px}
+.card{background:rgba(255,255,255,0.02);backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2);border:1px solid rgba(255,255,255,0.05);border-radius:16px;overflow:hidden;transition:all 0.4s cubic-bezier(0.16,1,0.3,1);cursor:pointer;opacity:0;animation:card-enter 0.7s cubic-bezier(0.16,1,0.3,1) forwards}
+.card:hover{transform:translateY(-6px) scale(1.01);box-shadow:0 20px 60px rgba(183,13,17,0.2),0 0 0 1px rgba(255,43,68,0.12),0 0 80px rgba(255,43,68,0.05);border-color:rgba(255,43,68,0.2)}
+.card:active{transform:translateY(-2px) scale(0.99)}
+.card .img-wrap{position:relative;overflow:hidden;aspect-ratio:1;background:rgba(12,12,16,0.8)}
+.card .img-wrap img{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.6s cubic-bezier(0.16,1,0.3,1)}
+.card:hover .img-wrap img{transform:scale(1.05)}
+.card .img-wrap .overlay{position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(0,0,0,0.6) 100%);opacity:0;transition:opacity 0.3s ease;display:flex;align-items:flex-end;justify-content:center;padding:16px}
+.card:hover .img-wrap .overlay{opacity:1}
+.card .img-wrap .overlay .dl-btn{padding:6px 16px;background:rgba(255,255,255,0.15);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.2);border-radius:20px;color:#fff;font-size:11px;font-weight:500;letter-spacing:0.04em;cursor:pointer;transition:all 0.2s ease;display:flex;align-items:center;gap:6px}
+.card .img-wrap .overlay .dl-btn:hover{background:rgba(255,43,68,0.3);border-color:rgba(255,43,68,0.4)}
+.card .info{padding:14px 16px;background:linear-gradient(180deg,rgba(8,8,12,0.3) 0%,rgba(8,8,12,0.5) 100%)}
+.card .prompt{color:rgba(255,255,255,0.45);font-size:11.5px;line-height:1.55;max-height:54px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;font-weight:400}
+.card .meta{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.card .time{color:rgba(255,255,255,0.15);font-size:10px;font-weight:500;letter-spacing:0.03em}
+.card .badge{color:rgba(255,43,68,0.5);font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:2px 8px;background:rgba(255,43,68,0.06);border-radius:8px}
+@keyframes card-enter{from{opacity:0;transform:translateY(20px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
+.generating .gen-inner{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(135deg,rgba(12,12,16,0.95),rgba(20,14,18,0.9));position:relative;overflow:hidden}
+.generating .gen-inner::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,43,68,0.05) 50%,transparent 100%);animation:gen-shimmer 2.5s ease-in-out infinite}
+.generating .gen-inner::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(255,43,68,0.04),transparent 60%);animation:gen-pulse 3s ease-in-out infinite}
+.gen-spinner{width:32px;height:32px;border:2px solid rgba(255,255,255,0.06);border-top-color:rgba(255,43,68,0.5);border-radius:50%;animation:spin 1s linear infinite;z-index:1}
+.gen-text{color:rgba(255,255,255,0.2);font-size:11px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;z-index:1}
+@keyframes gen-shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+@keyframes gen-pulse{0%,100%{opacity:0.5}50%{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:120px 32px;grid-column:1/-1}
+.empty-icon{width:64px;height:64px;margin:0 auto 20px;opacity:0.08}
+.empty-title{color:rgba(255,255,255,0.15);font-size:16px;font-weight:500;margin-bottom:8px;letter-spacing:-0.01em}
+.empty-sub{color:rgba(255,255,255,0.08);font-size:12px;font-weight:400;letter-spacing:0.02em}
+.lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:none;align-items:center;justify-content:center;opacity:0;transition:opacity 0.3s ease;cursor:zoom-out}
+.lightbox.active{display:flex;opacity:1}
+.lightbox img{max-width:85vw;max-height:85vh;border-radius:12px;box-shadow:0 16px 80px rgba(0,0,0,0.5);transition:transform 0.4s cubic-bezier(0.16,1,0.3,1)}
+.lightbox .close{position:absolute;top:24px;right:24px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;cursor:pointer;color:rgba(255,255,255,0.5);font-size:18px;transition:all 0.2s ease;backdrop-filter:blur(12px)}
+.lightbox .close:hover{background:rgba(255,43,68,0.2);border-color:rgba(255,43,68,0.3);color:#fff}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.12)}
 </style></head><body>
-<div class="header"><h1>Lobster Gallery</h1><span class="count" id="count">0 images</span></div>
-<div class="grid" id="grid"><div class="empty" id="empty">Images will appear here as they are generated...</div></div>
+<div class="aurora"><div class="aurora-orb"></div><div class="aurora-orb"></div><div class="aurora-orb"></div><div class="aurora-orb"></div></div>
+<div class="header">
+  <div class="header-logo">
+    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="52" r="28" fill="#B70D11" opacity="0.9"/><ellipse cx="50" cy="50" rx="26" ry="24" fill="#FF2B44"/>
+      <circle cx="40" cy="46" r="4" fill="#fff"/><circle cx="60" cy="46" r="4" fill="#fff"/>
+      <circle cx="41" cy="46" r="2" fill="#1a1a2e"/><circle cx="61" cy="46" r="2" fill="#1a1a2e"/>
+      <path d="M38 58 Q50 66 62 58" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+      <path d="M30 30 Q26 18 20 22" stroke="#FF2B44" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <path d="M70 30 Q74 18 80 22" stroke="#FF2B44" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <path d="M24 56 L10 62 L12 58 L8 54" stroke="#FF2B44" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M76 56 L90 62 L88 58 L92 54" stroke="#FF2B44" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+    <div><h1>Gallery</h1><span class="subtitle">AI-Generated Creations</span></div>
+  </div>
+  <span class="count" id="count">0 images</span>
+</div>
+<div class="grid" id="grid">
+  <div class="empty" id="empty">
+    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    <div class="empty-title">No images yet</div>
+    <div class="empty-sub">Ask Lobster to generate or create images — they'll appear here</div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox" onclick="this.classList.remove('active')">
+  <img id="lb-img" src="" alt="">
+  <div class="close" onclick="event.stopPropagation();document.getElementById('lightbox').classList.remove('active')">&times;</div>
+</div>
 <script>
-window._images=[];
-window.addImage=function(d){window._images.push(d);var e=document.getElementById('empty');if(e)e.remove();var g=document.getElementById('grid');var c=document.createElement('div');c.className='card';c.style.animation='fadeIn 0.5s ease';c.innerHTML='<img src="'+d.src+'" alt="Generated"><div class=info><div class=prompt>'+(d.prompt||'').replace(/</g,'&lt;').substring(0,120)+'</div><div class=time>'+new Date(d.ts||Date.now()).toLocaleTimeString()+'</div></div>';g.insertBefore(c,g.firstChild);document.getElementById('count').textContent=window._images.length+' image'+(window._images.length!==1?'s':'');};
-window.showGenerating=function(){var g=document.getElementById('grid');var p=document.createElement('div');p.className='card generating';p.id='generating-placeholder';p.innerHTML='<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:#111"><div style="color:rgba(255,255,255,0.3);font-size:13px">Generating...</div></div>';g.insertBefore(p,g.firstChild)};
-window.hideGenerating=function(){var p=document.getElementById('generating-placeholder');if(p)p.remove()};
+window._images=[];var _cardIndex=0;
+window.addImage=function(data){window._images.push(data);document.getElementById('empty')?.remove();var grid=document.getElementById('grid');var card=document.createElement('div');card.className='card';card.style.animationDelay='0.05s';var idx=window._images.length;var promptText=(data.prompt||'').replace(/</g,'&lt;').substring(0,140);var timeStr=new Date(data.ts||Date.now()).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});card.innerHTML='<div class="img-wrap"><img src="'+data.src+'" alt="Generated"><div class="overlay"><div class="dl-btn" onclick="event.stopPropagation();downloadImg('+(idx-1)+')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</div></div></div><div class="info"><div class="prompt">'+promptText+'</div><div class="meta"><span class="time">'+timeStr+'</span><span class="badge">AI Generated</span></div></div>';card.onclick=function(){openLightbox(data.src)};grid.insertBefore(card,grid.firstChild);document.getElementById('count').textContent=window._images.length+' image'+(window._images.length!==1?'s':'')};
+window.showGenerating=function(){var grid=document.getElementById('grid');document.getElementById('empty')?.remove();var ph=document.createElement('div');ph.className='card generating';ph.id='generating-placeholder';ph.style.opacity='1';ph.innerHTML='<div class="gen-inner"><div class="gen-spinner"></div><div class="gen-text">Creating...</div></div>';grid.insertBefore(ph,grid.firstChild)};
+window.hideGenerating=function(){var ph=document.getElementById('generating-placeholder');if(ph)ph.remove()};
+function openLightbox(src){var lb=document.getElementById('lightbox');document.getElementById('lb-img').src=src;lb.classList.add('active')}
+function downloadImg(idx){var img=window._images[idx];if(!img)return;var a=document.createElement('a');a.href=img.src;a.download='lobster-'+Date.now()+'.png';a.click()}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')document.getElementById('lightbox').classList.remove('active')});
 </script></body></html>`;
       // Load inline HTML
       const tabObj = tabs.get(galleryTabId);

@@ -257,15 +257,29 @@ NOISE FILTERING — CRITICAL:
 - NEVER call execute_user_intent with 1-2 word fragments or conversational phrases.
 - When in doubt: RESPOND VERBALLY, do NOT call execute_user_intent.
 
-MULTI-TASKING:
-- You CAN chat naturally even while a background task is running!
-- If a task is running and the user asks a general question ("what's the weather?", "tell me a joke"), ANSWER IT normally.
-- Only refuse to start a NEW browser task if one is already running: "I'm still working on the previous thing, give me a sec."
+MULTI-TASKING & ORCHESTRATION — YOU ARE THE DIRECTOR:
+- You CAN chat naturally even while background tasks are running!
+- You can delegate MULTIPLE tasks from a single user request. E.g., "open YouTube and check LinkedIn" → call execute_user_intent TWICE, once for each task. They run in PARALLEL.
+- Up to 3 tasks can run simultaneously. Each gets its own tab and works independently.
+- You receive [TASK UPDATE] messages showing executor progress. Use them to stay informed.
+- Use check_task_status() when the user asks "what's running?" or you need to see active tasks.
+- Use cancel_task() to stop a specific task or all tasks. User can say "stop everything" or "cancel that".
+- Keep the user informed proactively: "Your YouTube tab is loading, and I'm also working on that LinkedIn message."
+- If a task seems stuck, consider cancelling and retrying with a different approach.
+- You are the ORCHESTRATOR — you manage, redirect, and oversee all running agents.
 - You are NEVER mute or frozen. Always respond to the user, even during background work.
+
+VISION — YOU CAN SEE:
+- You periodically receive screenshots of what the browser agents are doing.
+- Use this to give INFORMED feedback: "I can see YouTube loaded — the search results look good!"
+- If you spot an issue in a screenshot, proactively guide: call execute_user_intent with a corrective instruction.
+- When a task finishes, you see the final screenshot — describe what you see to the user.
+- NEVER say "screenshot" to the user. Instead say "I can see..." or "It looks like..."
+- If no tasks are running, you don't receive screenshots — that's normal.
 
 RULES:
 - TOOL CALL FIRST, then speak. Call execute_user_intent before your verbal response.
-- NEVER call execute_user_intent twice for the same request.
+- You CAN call execute_user_intent multiple times for DIFFERENT tasks in the same turn.
 - NEVER mention payments, subscriptions, money unless asked.
 - Be concise! 1-3 sentences max. No monologues or lectures.
 - ALWAYS respond when the user speaks to you. Never ignore them.
@@ -301,7 +315,8 @@ def _cancel_active_tasks(sid: str):
 
 def _can_delegate(sid: str) -> bool:
     """Check if delegation is allowed. Allows parallel tasks up to MAX_CONCURRENT_TASKS."""
-    if _delegations_this_turn.get(sid, 0) >= 1:
+    # Allow multiple delegations per turn (orchestrator can spawn parallel tasks)
+    if _delegations_this_turn.get(sid, 0) >= MAX_CONCURRENT_TASKS:
         return False
     # Count only non-cron active tasks
     active = _executor_active.get(sid, set())
@@ -374,19 +389,73 @@ async def execute_user_intent(tool_context: ToolContext, intent: str) -> dict:
     if any(_lower.startswith(gp) or _lower == gp for gp in _GARBAGE_PATTERNS):
         return {"status": "ignored", "result": "Sounds like background noise. Wait for a clear command."}
 
-    # Dedup: ignore duplicate calls within 3 seconds (conductor sometimes calls twice)
+    # Dedup: ignore SAME intent within 3 seconds (but allow different intents in same turn)
     now = time.time()
     last = _last_intent.get(sid)
-    if last and last[0] == clean_intent and now - last[1] < 8.0:
+    if last and last[0] == clean_intent and now - last[1] < 3.0:
         return {"status": "duplicate", "result": "Already processing this request. Wait for the result."}
     _last_intent[sid] = (clean_intent, now)
 
     # Fire-and-forget: router runs in background, conductor returns instantly
     asyncio.create_task(_master_router(sid, clean_intent))
-    return {"status": "started", "result": "Task accepted. Say a SHORT confirmation (1-3 words) and STOP. Do NOT call any more tools."}
+    return {"status": "started", "result": "Task accepted. Say a SHORT confirmation (1-3 words). You can call execute_user_intent again for additional parallel tasks."}
 
 
-ROUTER_TOOLS = [activate_listening, execute_user_intent]
+async def cancel_task(tool_context: ToolContext, task_id: str = "") -> dict:
+    """Cancel a specific running task by ID, or ALL running tasks if no ID given."""
+    sid = tool_context.state.get("_session_id", "default")
+    tasks = _executor_tasks.get(sid, {})
+    active = _executor_active.get(sid, set())
+    ws = _websockets.get(sid)
+
+    if task_id and task_id in tasks:
+        t = tasks[task_id]
+        if not t.done():
+            t.cancel()
+            tasks.pop(task_id, None)
+            active.discard(task_id)
+            if ws:
+                try:
+                    await ws.send_json({"type": "task_progress", "status": "cancelled", "task_id": task_id})
+                except Exception:
+                    pass
+            return {"status": "cancelled", "task_id": task_id}
+        return {"status": "already_done", "task_id": task_id}
+    elif not task_id:
+        cancelled = []
+        for tid, t in list(tasks.items()):
+            if tid.startswith("cron_"):
+                continue
+            if not t.done():
+                t.cancel()
+                cancelled.append(tid)
+        for tid in cancelled:
+            tasks.pop(tid, None)
+            active.discard(tid)
+            if ws:
+                try:
+                    await ws.send_json({"type": "task_progress", "status": "cancelled", "task_id": tid})
+                except Exception:
+                    pass
+        return {"status": "cancelled_all", "count": len(cancelled)}
+    return {"status": "not_found", "task_id": task_id}
+
+
+async def check_task_status(tool_context: ToolContext) -> dict:
+    """Get status of all running executor tasks. Use when user asks 'what's running?' or you need to check progress."""
+    sid = tool_context.state.get("_session_id", "default")
+    active = _executor_active.get(sid, set())
+    tasks_info = []
+    for tid in active:
+        if tid.startswith("cron_"):
+            continue
+        t = _executor_tasks.get(sid, {}).get(tid)
+        status = "running" if t and not t.done() else "done"
+        tasks_info.append({"task_id": tid, "status": status})
+    return {"tasks": tasks_info, "count": len(tasks_info), "max_parallel": MAX_CONCURRENT_TASKS}
+
+
+ROUTER_TOOLS = [activate_listening, execute_user_intent, cancel_task, check_task_status]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1386,185 +1455,6 @@ _GATHER_ELEMENTS_JS = r"""(function() {
 
 # ── Image generation helper ──
 
-_GALLERY_HTML = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Lobster Gallery</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Italiana&display=swap');
-body{background:#030305;color:#fff;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;min-height:100vh;position:relative;overflow-x:hidden}
-
-/* ── Aurora animated background ── */
-.aurora{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
-.aurora-orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:0;animation:orb-drift 20s ease-in-out infinite}
-.aurora-orb:nth-child(1){width:600px;height:600px;background:radial-gradient(circle,rgba(183,13,17,0.15),transparent 70%);top:-10%;left:10%;animation-delay:0s;animation-duration:18s}
-.aurora-orb:nth-child(2){width:500px;height:500px;background:radial-gradient(circle,rgba(255,43,68,0.1),transparent 70%);top:30%;right:-5%;animation-delay:-6s;animation-duration:22s}
-.aurora-orb:nth-child(3){width:700px;height:700px;background:radial-gradient(circle,rgba(120,0,60,0.08),transparent 70%);bottom:-15%;left:30%;animation-delay:-12s;animation-duration:25s}
-.aurora-orb:nth-child(4){width:400px;height:400px;background:radial-gradient(circle,rgba(255,80,100,0.06),transparent 70%);top:60%;left:-10%;animation-delay:-4s;animation-duration:20s}
-@keyframes orb-drift{0%{opacity:0.4;transform:translate(0,0) scale(1)}25%{opacity:0.8;transform:translate(40px,-30px) scale(1.1)}50%{opacity:0.5;transform:translate(-20px,50px) scale(0.95)}75%{opacity:0.9;transform:translate(30px,20px) scale(1.05)}100%{opacity:0.4;transform:translate(0,0) scale(1)}}
-
-/* ── SVG grain overlay ── */
-body::after{content:'';position:fixed;inset:0;opacity:0.025;pointer-events:none;z-index:1;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
-
-/* ── Header ── */
-.header{position:sticky;top:0;z-index:10;padding:24px 40px;display:flex;align-items:center;gap:16px;border-bottom:1px solid rgba(255,255,255,0.04);backdrop-filter:blur(24px) saturate(1.4);-webkit-backdrop-filter:blur(24px) saturate(1.4);background:rgba(6,6,10,0.6)}
-.header-logo{display:flex;align-items:center;gap:12px}
-.header-logo svg{width:28px;height:28px;filter:drop-shadow(0 0 8px rgba(255,43,68,0.3))}
-.header h1{font-family:'Italiana',serif;font-size:24px;font-weight:400;background:linear-gradient(135deg,#FF2B44 0%,#ff8090 40%,#FF2B44 80%,#B70D11 100%);background-size:200% 200%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:gradient-shift 6s ease-in-out infinite;letter-spacing:0.02em}
-@keyframes gradient-shift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-.header .subtitle{color:rgba(255,255,255,0.2);font-size:11px;font-weight:400;letter-spacing:0.06em;text-transform:uppercase;margin-left:4px}
-.header .count{color:rgba(255,255,255,0.3);font-size:11px;padding:4px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:20px;font-weight:500;margin-left:auto;backdrop-filter:blur(8px);letter-spacing:0.02em;transition:all 0.3s ease}
-.header .count:hover{background:rgba(255,43,68,0.08);border-color:rgba(255,43,68,0.15);color:rgba(255,255,255,0.5)}
-
-/* ── Grid ── */
-.grid{position:relative;z-index:2;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px;padding:32px 40px}
-
-/* ── Cards ── */
-.card{background:rgba(255,255,255,0.02);backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2);border:1px solid rgba(255,255,255,0.05);border-radius:16px;overflow:hidden;transition:all 0.4s cubic-bezier(0.16,1,0.3,1);cursor:pointer;opacity:0;animation:card-enter 0.7s cubic-bezier(0.16,1,0.3,1) forwards}
-.card:hover{transform:translateY(-6px) scale(1.01);box-shadow:0 20px 60px rgba(183,13,17,0.2),0 0 0 1px rgba(255,43,68,0.12),0 0 80px rgba(255,43,68,0.05);border-color:rgba(255,43,68,0.2)}
-.card:active{transform:translateY(-2px) scale(0.99)}
-.card .img-wrap{position:relative;overflow:hidden;aspect-ratio:1;background:rgba(12,12,16,0.8)}
-.card .img-wrap img{width:100%;height:100%;object-fit:cover;display:block;transition:transform 0.6s cubic-bezier(0.16,1,0.3,1)}
-.card:hover .img-wrap img{transform:scale(1.05)}
-.card .img-wrap .overlay{position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(0,0,0,0.6) 100%);opacity:0;transition:opacity 0.3s ease;display:flex;align-items:flex-end;justify-content:center;padding:16px}
-.card:hover .img-wrap .overlay{opacity:1}
-.card .img-wrap .overlay .dl-btn{padding:6px 16px;background:rgba(255,255,255,0.15);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.2);border-radius:20px;color:#fff;font-size:11px;font-weight:500;letter-spacing:0.04em;cursor:pointer;transition:all 0.2s ease;display:flex;align-items:center;gap:6px}
-.card .img-wrap .overlay .dl-btn:hover{background:rgba(255,43,68,0.3);border-color:rgba(255,43,68,0.4)}
-.card .info{padding:14px 16px;background:linear-gradient(180deg,rgba(8,8,12,0.3) 0%,rgba(8,8,12,0.5) 100%)}
-.card .prompt{color:rgba(255,255,255,0.45);font-size:11.5px;line-height:1.55;max-height:54px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;font-weight:400}
-.card .meta{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
-.card .time{color:rgba(255,255,255,0.15);font-size:10px;font-weight:500;letter-spacing:0.03em}
-.card .badge{color:rgba(255,43,68,0.5);font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:2px 8px;background:rgba(255,43,68,0.06);border-radius:8px}
-@keyframes card-enter{from{opacity:0;transform:translateY(20px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
-
-/* ── Generating placeholder ── */
-.generating .gen-inner{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(135deg,rgba(12,12,16,0.95),rgba(20,14,18,0.9));position:relative;overflow:hidden}
-.generating .gen-inner::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,43,68,0.05) 50%,transparent 100%);animation:gen-shimmer 2.5s ease-in-out infinite}
-.generating .gen-inner::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(255,43,68,0.04),transparent 60%);animation:gen-pulse 3s ease-in-out infinite}
-.gen-spinner{width:32px;height:32px;border:2px solid rgba(255,255,255,0.06);border-top-color:rgba(255,43,68,0.5);border-radius:50%;animation:spin 1s linear infinite;z-index:1}
-.gen-text{color:rgba(255,255,255,0.2);font-size:11px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;z-index:1}
-@keyframes gen-shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
-@keyframes gen-pulse{0%,100%{opacity:0.5}50%{opacity:1}}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* ── Empty state ── */
-.empty{text-align:center;padding:120px 32px;grid-column:1/-1}
-.empty-icon{width:64px;height:64px;margin:0 auto 20px;opacity:0.08}
-.empty-title{color:rgba(255,255,255,0.15);font-size:16px;font-weight:500;margin-bottom:8px;letter-spacing:-0.01em}
-.empty-sub{color:rgba(255,255,255,0.08);font-size:12px;font-weight:400;letter-spacing:0.02em}
-
-/* ── Lightbox ── */
-.lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:none;align-items:center;justify-content:center;opacity:0;transition:opacity 0.3s ease;cursor:zoom-out}
-.lightbox.active{display:flex;opacity:1}
-.lightbox img{max-width:85vw;max-height:85vh;border-radius:12px;box-shadow:0 16px 80px rgba(0,0,0,0.5);transition:transform 0.4s cubic-bezier(0.16,1,0.3,1)}
-.lightbox .close{position:absolute;top:24px;right:24px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;cursor:pointer;color:rgba(255,255,255,0.5);font-size:18px;transition:all 0.2s ease;backdrop-filter:blur(12px)}
-.lightbox .close:hover{background:rgba(255,43,68,0.2);border-color:rgba(255,43,68,0.3);color:#fff}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.12)}
-</style></head><body>
-
-<!-- Aurora orbs -->
-<div class="aurora">
-  <div class="aurora-orb"></div>
-  <div class="aurora-orb"></div>
-  <div class="aurora-orb"></div>
-  <div class="aurora-orb"></div>
-</div>
-
-<!-- Header -->
-<div class="header">
-  <div class="header-logo">
-    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="50" cy="52" r="28" fill="#B70D11" opacity="0.9"/>
-      <ellipse cx="50" cy="50" rx="26" ry="24" fill="#FF2B44"/>
-      <circle cx="40" cy="46" r="4" fill="#fff"/><circle cx="60" cy="46" r="4" fill="#fff"/>
-      <circle cx="41" cy="46" r="2" fill="#1a1a2e"/><circle cx="61" cy="46" r="2" fill="#1a1a2e"/>
-      <path d="M38 58 Q50 66 62 58" stroke="#fff" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-      <path d="M30 30 Q26 18 20 22" stroke="#FF2B44" stroke-width="3" stroke-linecap="round" fill="none"/>
-      <path d="M70 30 Q74 18 80 22" stroke="#FF2B44" stroke-width="3" stroke-linecap="round" fill="none"/>
-      <path d="M24 56 L10 62 L12 58 L8 54" stroke="#FF2B44" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      <path d="M76 56 L90 62 L88 58 L92 54" stroke="#FF2B44" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    </svg>
-    <div>
-      <h1>Gallery</h1>
-      <span class="subtitle">AI-Generated Creations</span>
-    </div>
-  </div>
-  <span class="count" id="count">0 images</span>
-</div>
-
-<!-- Grid -->
-<div class="grid" id="grid">
-  <div class="empty" id="empty">
-    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-    <div class="empty-title">No images yet</div>
-    <div class="empty-sub">Ask Lobster to generate or create images — they'll appear here</div>
-  </div>
-</div>
-
-<!-- Lightbox -->
-<div class="lightbox" id="lightbox" onclick="this.classList.remove('active')">
-  <img id="lb-img" src="" alt="">
-  <div class="close" onclick="event.stopPropagation();document.getElementById('lightbox').classList.remove('active')">&times;</div>
-</div>
-
-<script>
-window._images = [];
-var _cardIndex = 0;
-window.addImage = function(data) {
-  window._images.push(data);
-  document.getElementById('empty')?.remove();
-  var grid = document.getElementById('grid');
-  var card = document.createElement('div');
-  card.className = 'card';
-  card.style.animationDelay = '0.05s';
-  var idx = window._images.length;
-  var promptText = (data.prompt || '').replace(/</g,'&lt;').substring(0,140);
-  var timeStr = new Date(data.ts || Date.now()).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  card.innerHTML = '<div class="img-wrap"><img src="' + data.src + '" alt="Generated">' +
-    '<div class="overlay"><div class="dl-btn" onclick="event.stopPropagation();downloadImg(' + (idx-1) + ')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</div></div>' +
-    '</div><div class="info"><div class="prompt">' + promptText +
-    '</div><div class="meta"><span class="time">' + timeStr + '</span><span class="badge">AI Generated</span></div></div>';
-  card.onclick = function() { openLightbox(data.src); };
-  grid.insertBefore(card, grid.firstChild);
-  document.getElementById('count').textContent = window._images.length + ' image' + (window._images.length !== 1 ? 's' : '');
-};
-window.showGenerating = function() {
-  var grid = document.getElementById('grid');
-  document.getElementById('empty')?.remove();
-  var ph = document.createElement('div');
-  ph.className = 'card generating';
-  ph.id = 'generating-placeholder';
-  ph.style.opacity = '1';
-  ph.innerHTML = '<div class="gen-inner"><div class="gen-spinner"></div><div class="gen-text">Creating...</div></div>';
-  grid.insertBefore(ph, grid.firstChild);
-};
-window.hideGenerating = function() {
-  var ph = document.getElementById('generating-placeholder');
-  if (ph) ph.remove();
-};
-function openLightbox(src) {
-  var lb = document.getElementById('lightbox');
-  document.getElementById('lb-img').src = src;
-  lb.classList.add('active');
-}
-function downloadImg(idx) {
-  var img = window._images[idx];
-  if (!img) return;
-  var a = document.createElement('a');
-  a.href = img.src;
-  a.download = 'lobster-' + Date.now() + '.png';
-  a.click();
-}
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('active');
-});
-</script>
-</body></html>"""
-
 _gallery_tab_ids: dict[str, str] = {}  # session_id → taskId of gallery tab
 
 async def _generate_image(prompt: str) -> str | None:
@@ -2385,6 +2275,17 @@ NEVER call done() until you have visually VERIFIED the result. Maximum {MAX_STEP
                 # Yield to event loop between tool calls — keeps Live API audio flowing
                 await asyncio.sleep(0.01)
 
+                # Periodic status update to Conductor — every 5 steps, so it stays aware
+                if step > 0 and step % 5 == 0:
+                    live_queue = _live_queues.get(session_id)
+                    if live_queue:
+                        try:
+                            live_queue.send_content(types.Content(parts=[
+                                types.Part(text=f"[TASK UPDATE] Task '{task[:40]}' (id={task_id}): step {step}/{MAX_STEPS}, last action: {fc_name}. Keep the user informed if they ask.")
+                            ]))
+                        except Exception:
+                            pass
+
                 # Handle done() tool — explicit completion signal
                 if fc_name == "done":
                     result_text = fc_args.get("summary", "Task complete.")
@@ -2600,14 +2501,28 @@ NEVER call done() until you have visually VERIFIED the result. Maximum {MAX_STEP
                 # Cleanup swarm tracker
                 _swarm_tracker.pop(sw_id, None)
         else:
-            # ── NORMAL HANDOFF: Inject result back into Conductor ──
+            # ── NORMAL HANDOFF: Inject result + final screenshot into Conductor ──
             short_result = result_text[:200].rsplit('.', 1)[0] or result_text[:150]
             live_queue = _live_queues.get(session_id)
             if live_queue:
                 try:
                     _handoff_pending[session_id] = True  # Signal downstream to open audio gate
+                    # Send final screenshot so conductor can SEE the result
+                    final_ss = _task_screenshots.get(task_id) or _screenshots.get(session_id)
+                    if final_ss and len(final_ss) > 1000:
+                        try:
+                            from io import BytesIO
+                            _pil_img = Image.open(BytesIO(final_ss))
+                            _pil_img = _pil_img.resize((512, 512), Image.LANCZOS)
+                            _buf = BytesIO()
+                            _pil_img.save(_buf, format="JPEG", quality=60)
+                            live_queue.send_realtime(
+                                types.Blob(mime_type="image/jpeg", data=_buf.getvalue())
+                            )
+                        except Exception:
+                            pass
                     live_queue.send_content(types.Content(parts=[
-                        types.Part(text=f"IMPORTANT: A task just finished. Results: {short_result}. You MUST speak now — tell the user what happened in 1-2 sentences. Speak in the same language as the user. Be enthusiastic and clear.")
+                        types.Part(text=f"IMPORTANT: A task just finished. Results: {short_result}. Look at the screenshot I just sent — it shows the final state. You MUST speak now — tell the user what happened in 1-2 sentences. Be enthusiastic and clear.")
                     ]))
                     print(f"[executor] Handoff sent to Conductor ({len(short_result)} chars)")
                     # Store task result in conversation history for reconnect context
@@ -3165,6 +3080,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
     _events_received = 0
     _last_event_time = time.time()
     _force_reconnect = False
+    _last_conductor_screenshot = 0.0  # Rate-limit screenshot forwarding to conductor
     # No suppression — agent greets and speaks from the start
     _suppress_prime = False
     # No mute delay — audio flows immediately for instant responsiveness
@@ -3257,7 +3173,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
     # ── Upstream: Electron → Conductor (audio only) ──────────────
 
     async def upstream_reader():
-        nonlocal client_alive, _audio_packets_sent, _screenshots_stored, _audio_mute_until, _awake
+        nonlocal client_alive, _audio_packets_sent, _screenshots_stored, _audio_mute_until, _awake, _last_conductor_screenshot
         msg_count = 0
         try:
             while client_alive:
@@ -3293,10 +3209,31 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                             types.Blob(mime_type="audio/pcm;rate=16000", data=enhanced_audio)
                         )
                     elif header == 0x02:
-                        # Screenshot → STORE ONLY (Executor reads from _screenshots)
+                        # Screenshot → STORE for Executor + rate-limited forward to Conductor
                         if len(payload) > 100:
                             _screenshots_stored += 1
                             _screenshots[session_id] = payload
+
+                            # Forward to Conductor: 1 screenshot every 8s, ONLY during active tasks
+                            now_ss = time.time()
+                            if now_ss - _last_conductor_screenshot > 8.0:
+                                active_tasks = _executor_active.get(session_id, set())
+                                non_cron = {t for t in active_tasks if not t.startswith("cron_")}
+                                if non_cron:
+                                    _last_conductor_screenshot = now_ss
+                                    try:
+                                        # Compress to 512x512 JPEG q60 to save tokens
+                                        from io import BytesIO
+                                        _pil_img = Image.open(BytesIO(payload))
+                                        _pil_img = _pil_img.resize((512, 512), Image.LANCZOS)
+                                        _buf = BytesIO()
+                                        _pil_img.save(_buf, format="JPEG", quality=60)
+                                        _compressed = _buf.getvalue()
+                                        live_request_queue.send_realtime(
+                                            types.Blob(mime_type="image/jpeg", data=_compressed)
+                                        )
+                                    except Exception as e:
+                                        print(f"[vision] Failed to send screenshot to conductor: {e}")
 
                 elif "text" in msg:
                     data = json.loads(msg["text"])
@@ -3378,16 +3315,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
         retry_count = 0
         current_session_id = session_id
         input_transcript_buf = ""  # Accumulate input transcription deltas
-        # Dedup: track last delegation to prevent model re-delegating same task
-        _last_delegation_text = ""
-        _last_delegation_time = 0.0
 
         # _reset_awake_timer, _go_to_sleep, _send_wake_state are defined at
         # websocket_endpoint scope (shared with upstream_reader)
 
         _last_user_speech = ""  # Track last user speech for voice fallback
         _tool_called_this_turn = False  # Track if conductor called a tool this turn
-        _intent_called_this_turn = False  # Per-turn lock: only 1 execute_user_intent per turn
+        _last_delegation_text = ""  # Dedup: last delegated intent text
+        _last_delegation_time = 0.0  # Dedup: last delegation timestamp
         _last_activate_listening = 0.0  # Rate-limit activate_listening (5s cooldown)
         _last_voice_fallback = 0.0  # COST: Rate-limit voice fallback (10s cooldown)
 
@@ -3448,16 +3383,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                                 fc_args = dict(fc.args) if fc.args else {}
                                 print(f"[conductor] Tool: {fc.name}({json.dumps(fc_args, ensure_ascii=False)[:200]})")
 
-                                # Dedup: skip duplicate execute_user_intent within 10s + per-turn lock
+                                # Dedup: skip SAME intent text within 3s (allow different intents for parallel tasks)
                                 if fc.name == "execute_user_intent":
-                                    if _intent_called_this_turn:
-                                        print(f"[conductor] BLOCKED: duplicate execute_user_intent in same turn")
-                                        continue
-                                    _intent_called_this_turn = True
                                     _tool_called_this_turn = True
                                     intent_text = fc_args.get("intent", "")
                                     now_dedup = time.time()
-                                    if intent_text and intent_text == _last_delegation_text and (now_dedup - _last_delegation_time) < 10:
+                                    if intent_text and intent_text == _last_delegation_text and (now_dedup - _last_delegation_time) < 3:
                                         print(f"[conductor] DEDUP: skipping duplicate intent '{intent_text[:50]}'")
                                         continue
                                     if intent_text:
@@ -3617,7 +3548,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                             input_transcript_buf = ""  # Reset input buffer for next turn
                             _last_user_speech = ""  # Reset for next turn
                             _tool_called_this_turn = False  # Reset for next turn
-                            _intent_called_this_turn = False  # Reset per-turn intent lock
                             _suppress_prime = False  # After first turn, ALL audio flows freely
                             _delegations_this_turn[session_id] = 0
                             await websocket.send_json({"type": "status", "state": "idle"})
