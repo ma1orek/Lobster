@@ -80,6 +80,7 @@ function getContentBounds(): Electron.Rectangle {
 // No tab can ever cover the chrome bar area.
 
 function updateChromeH(h: number) {
+  if (h === chromeH) return; // No change — skip expensive z-order recalc
   chromeH = h;
   if (!mainWebView || !mainWindow) return;
   const [w, height] = mainWindow.getContentSize();
@@ -110,50 +111,62 @@ function ensureZOrder() {
     return t && (!t.url || t.url === 'about:blank');
   })();
 
-  // Safety: hide tabs that shouldn't be visible
+  // Build desired order: [agent tabs..., ghost, split, active, mainWebView]
+  const desired: View[] = [];
+  for (const atid of agentTabIds) {
+    if (atid === activeTabId || atid === ghostTabId) continue;
+    const at = tabs.get(atid);
+    if (at && !at.view.webContents.isDestroyed()) desired.push(at.view);
+  }
+  if (ghostTabId !== null) {
+    const gt = tabs.get(ghostTabId);
+    if (gt && !gt.view.webContents.isDestroyed()) desired.push(gt.view);
+  }
+  if (splitTabId !== null && splitTabId !== activeTabId) {
+    const st = tabs.get(splitTabId);
+    if (st && !st.view.webContents.isDestroyed()) desired.push(st.view);
+  }
+  if (activeTabId !== null) {
+    const at = tabs.get(activeTabId);
+    if (at && !at.view.webContents.isDestroyed()) desired.push(at.view);
+  }
+  desired.push(mainWebView);
+
+  // Check if current children order already matches desired
+  const current = rootView.children;
+  let orderCorrect = current.length === desired.length;
+  if (orderCorrect) {
+    for (let i = 0; i < desired.length; i++) {
+      if (current[i] !== desired[i]) { orderCorrect = false; break; }
+    }
+  }
+
+  // Only do the expensive remove/add dance if order actually changed
+  if (!orderCorrect) {
+    // Remove all, re-add in correct order
+    for (const child of [...current]) {
+      try { rootView.removeChildView(child); } catch { /* ok */ }
+    }
+    for (const child of desired) {
+      rootView.addChildView(child);
+    }
+  }
+
+  // Set visibility (cheap — no flicker)
   for (const [tid, t] of tabs) {
     try {
       if (t.view.webContents.isDestroyed()) continue;
-      if (tid !== activeTabId && tid !== ghostTabId && tid !== splitTabId && !agentTabIds.has(tid)) {
+      if (tid === activeTabId || tid === splitTabId) {
+        t.view.setVisible(true);
+      } else if (tid === ghostTabId) {
+        t.view.setVisible(true);
+      } else if (agentTabIds.has(tid)) {
+        t.view.setVisible(!activeIsNewTab);
+      } else {
         t.view.setVisible(false);
       }
     } catch { /* destroyed */ }
   }
-  // 1) Agent tabs at the very bottom — visible for CDP capture (capturePage not needed if using CDP)
-  // BUT: hide them when user is on New Tab to keep start page clean
-  for (const atid of agentTabIds) {
-    if (atid === activeTabId || atid === ghostTabId) continue;
-    const at = tabs.get(atid);
-    if (at && rootView.children.includes(at.view)) {
-      rootView.removeChildView(at.view);
-      rootView.addChildView(at.view);
-      // Only show agent tabs when user is viewing a real page, not the start page
-      at.view.setVisible(!activeIsNewTab);
-    }
-  }
-  // 2) Ghost tab above agent tabs
-  if (ghostTabId !== null) {
-    const gt = tabs.get(ghostTabId);
-    if (gt && rootView.children.includes(gt.view)) {
-      rootView.removeChildView(gt.view);
-      rootView.addChildView(gt.view);
-      gt.view.setVisible(true);
-    }
-  }
-  // 3) Active user tab above ghost/agent tabs
-  if (activeTabId !== null) {
-    const at = tabs.get(activeTabId);
-    if (at && rootView.children.includes(at.view)) {
-      rootView.removeChildView(at.view);
-      rootView.addChildView(at.view);
-      at.view.setVisible(true);
-    }
-  }
-  // 4) mainWebView ALWAYS topmost — chrome bar is never obscured
-  if (rootView.children.includes(mainWebView)) {
-    rootView.removeChildView(mainWebView);
-  }
-  rootView.addChildView(mainWebView);
 }
 
 // Get tab IDs that are user-visible (exclude ghost tabs — they're hidden agent tabs)
@@ -387,17 +400,16 @@ function createTab(url: string, switchTo = true): Tab {
     // Notify React UI — user tab appears in tab bar
     mainWindow?.webContents.send('tab-created', { id, url, title: 'New Tab' });
   } else {
-    // Agent tab: visible in tab bar (co-worker model) but NOT switched to.
-    // Placed at full window bounds so capturePage() works (needs real rendering area).
+    // Agent tab: works 100% in background via CDP — no visual tab switching needed.
     // User CAN click on this tab to watch agent's work.
-    // Show chrome bar so the user sees the 🦞 Agent tab appear.
-    updateChromeH(CHROME_H_BROWSING);
+    if (chromeH === 0) updateChromeH(CHROME_H_BROWSING);
     if (rootView) {
       if (!rootView.children.includes(view)) {
         rootView.addChildView(view);
       }
       view.setBounds(getContentBounds());
-      ensureZOrder();
+      view.setVisible(false); // Hidden behind active tab — CDP captures regardless
+      ensureZOrder(); // Only reorders if order actually changed
     }
     // Notify React — show in tab bar with agent indicator
     mainWindow?.webContents.send('tab-created', { id, url, title: '🦞 Agent', isAgent: true });
